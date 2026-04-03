@@ -11,7 +11,10 @@ from langchain_core.output_parsers import StrOutputParser
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=[
+    'http://localhost:5173',
+    'https://pierreguard-scan.netlify.app'
+])
 
 AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
 AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
