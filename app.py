@@ -46,7 +46,7 @@ def get_llm():
         client=bedrock_runtime,
         model_id=CLAUDE_MODEL,
         model_kwargs={
-            'max_tokens': 4096,
+            'max_tokens': 3000,
             'temperature': 0
         }
     )
@@ -59,7 +59,7 @@ def query_knowledge_base(query):
             retrievalQuery={'text': query},
             retrievalConfiguration={
                 'vectorSearchConfiguration': {
-                    'numberOfResults': 5
+                    'numberOfResults': 3
                 }
             }
         )
@@ -107,13 +107,10 @@ def fetch_iam_users():
 def fetch_iam_roles():
     response = iam_client.list_roles()
     roles = []
-    for role in response['Roles'][:20]:
+    for role in response['Roles'][:10]:
         role_data = {
             'name': role['RoleName'],
             'created': str(role['CreateDate']),
-            'trust_policy': json.dumps(
-                role['AssumeRolePolicyDocument'], indent=2
-            ),
             'policies': []
         }
         attached = iam_client.list_attached_role_policies(
@@ -128,7 +125,7 @@ def fetch_iam_roles():
 def fetch_iam_policies():
     response = iam_client.list_policies(Scope='Local')
     policies = []
-    for policy in response['Policies']:
+    for policy in response['Policies'][:8]:
         try:
             version = iam_client.get_policy_version(
                 PolicyArn=policy['Arn'],
@@ -146,42 +143,58 @@ def fetch_iam_policies():
     return policies
 
 
+def build_compact_iam_summary(users, roles, policies):
+    user_summaries = []
+    for u in users:
+        user_summaries.append({
+            'username': u['username'],
+            'policies': u['policies'],
+            'groups': u['groups'],
+            'has_access_keys': len(u['access_keys']) > 0,
+            'key_count': len(u['access_keys']),
+            'inline_policies': u['inline_policies']
+        })
+
+    return {
+        'total_users': len(users),
+        'users': user_summaries,
+        'roles_count': len(roles),
+        'roles': [{'name': r['name'], 'policies': r['policies']} for r in roles[:5]],
+        'custom_policies_count': len(policies),
+        'custom_policies': [{'name': p['name']} for p in policies]
+    }
+
+
 def analyse_iam_with_langchain(users, roles, policies, kb_context):
     llm = get_llm()
 
+    kb_short = kb_context[:2000] if len(kb_context) > 2000 else kb_context
+
     template_str = (
         "You are an expert AWS IAM security auditor for PierreGuard AI.\n\n"
-        "You must assess the IAM configuration against the PierreGuard Security Standards below.\n"
-        "Every finding must reference the specific standard it violates.\n\n"
-        "PIERREGUARD SECURITY STANDARDS:\n{security_standards}\n\n"
-        "IAM CONFIGURATION TO AUDIT:\n{iam_data}\n\n"
-        "Produce a structured security audit report with these exact sections:\n\n"
+        "Assess this IAM configuration against PierreGuard Security Standards.\n\n"
+        "SECURITY STANDARDS SUMMARY:\n{security_standards}\n\n"
+        "IAM DATA:\n{iam_data}\n\n"
+        "Produce a security audit with these sections:\n\n"
         "1. EXECUTIVE SUMMARY\n"
-        "   - Overall risk score from 1 to 10 based on the PierreGuard risk scoring framework\n"
-        "   - One paragraph summary of the security posture\n\n"
+        "   - Risk score 1-10\n"
+        "   - Brief summary\n\n"
         "2. CRITICAL FINDINGS\n"
-        "   - Each finding must include:\n"
-        "     * Which user or role is affected\n"
-        "     * Which PierreGuard standard is violated\n"
-        "     * Why this is dangerous\n"
-        "     * Specific remediation step with AWS CLI command\n\n"
+        "   - User affected, standard violated, why dangerous, AWS CLI fix\n\n"
         "3. HIGH FINDINGS\n"
-        "   - Same format as critical findings\n\n"
+        "   - Same format\n\n"
         "4. MEDIUM FINDINGS\n"
-        "   - Same format as critical findings\n\n"
+        "   - Same format\n\n"
         "5. LOW FINDINGS\n"
-        "   - Brief list of minor improvements\n\n"
+        "   - Brief list\n\n"
         "6. USER RISK SUMMARY\n"
-        "   - For each user provide a one line risk assessment in this exact format:\n"
-        "     USERNAME | RISK_LEVEL | ONE_LINE_REASON\n"
-        "   - RISK_LEVEL must be exactly one of: CRITICAL, HIGH, MEDIUM, LOW, CLEAN\n\n"
+        "   - Format: USERNAME | RISK_LEVEL | REASON\n"
+        "   - RISK_LEVEL: CRITICAL, HIGH, MEDIUM, LOW, or CLEAN\n\n"
         "7. REMEDIATION PLAN\n"
-        "   - Prioritised list of actions, most critical first\n"
-        "   - Include specific AWS CLI commands for each action\n\n"
+        "   - Top 5 priority actions with AWS CLI commands\n\n"
         "8. COMPLIANCE STATUS\n"
-        "   - Rate compliance with: CIS AWS Benchmark, SOC2, ISO27001\n"
-        "   - Use PASS, PARTIAL, or FAIL for each\n\n"
-        "Be specific. Name exact users, policies, and standards violated."
+        "   - CIS AWS Benchmark, SOC2, ISO27001: PASS, PARTIAL, or FAIL\n\n"
+        "Be specific. Name exact users and policies."
     )
 
     prompt_template = PromptTemplate(
@@ -189,18 +202,13 @@ def analyse_iam_with_langchain(users, roles, policies, kb_context):
         template=template_str
     )
 
-    iam_summary = {
-        'users': users,
-        'roles_count': len(roles),
-        'roles_sample': roles[:5],
-        'custom_policies': policies
-    }
+    compact_summary = build_compact_iam_summary(users, roles, policies)
 
     chain = prompt_template | llm | StrOutputParser()
 
     result = chain.invoke({
-        'iam_data': json.dumps(iam_summary, indent=2, default=str),
-        'security_standards': kb_context
+        'iam_data': json.dumps(compact_summary, indent=2, default=str),
+        'security_standards': kb_short
     })
 
     return result
@@ -248,8 +256,9 @@ def scan_iam():
         policies = fetch_iam_policies()
         print(f'Fetched {len(policies)} custom policies')
 
-        print('Running LangChain analysis with PierreGuard standards...')
+        print('Running LangChain analysis...')
         report = analyse_iam_with_langchain(users, roles, policies, kb_context)
+        print('Analysis complete')
 
         user_risks = parse_user_risk_summary(report)
 
