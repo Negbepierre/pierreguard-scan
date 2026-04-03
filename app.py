@@ -4,9 +4,6 @@ import boto3
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
-from langchain_aws import ChatBedrock
-from langchain_core.prompts import PromptTemplate
-from langchain_core.output_parsers import StrOutputParser
 
 load_dotenv()
 
@@ -41,15 +38,23 @@ bedrock_agent = boto3.client(
 )
 
 
-def get_llm():
-    return ChatBedrock(
-        client=bedrock_runtime,
-        model_id=CLAUDE_MODEL,
-        model_kwargs={
-            'max_tokens': 3000,
-            'temperature': 0
-        }
+def call_claude(prompt):
+    body = json.dumps({
+        'anthropic_version': 'bedrock-2023-05-31',
+        'max_tokens': 2500,
+        'temperature': 0,
+        'messages': [
+            {'role': 'user', 'content': prompt}
+        ]
+    })
+    response = bedrock_runtime.invoke_model(
+        modelId=CLAUDE_MODEL,
+        body=body,
+        contentType='application/json',
+        accept='application/json'
     )
+    result = json.loads(response['body'].read())
+    return result['content'][0]['text']
 
 
 def query_knowledge_base(query):
@@ -66,7 +71,7 @@ def query_knowledge_base(query):
         results = []
         for result in response.get('retrievalResults', []):
             results.append(result['content']['text'])
-        return '\n\n'.join(results)
+        return '\n\n'.join(results)[:2000]
     except Exception as e:
         print(f'Knowledge base query error: {str(e)}')
         return ''
@@ -127,55 +132,41 @@ def fetch_iam_policies():
     policies = []
     for policy in response['Policies'][:8]:
         try:
-            version = iam_client.get_policy_version(
-                PolicyArn=policy['Arn'],
-                VersionId=policy['DefaultVersionId']
-            )
-            policies.append({
-                'name': policy['PolicyName'],
-                'arn': policy['Arn'],
-                'document': json.dumps(
-                    version['PolicyVersion']['Document'], indent=2
-                )
-            })
+            policies.append({'name': policy['PolicyName']})
         except Exception as e:
-            print(f'Error fetching policy {policy["PolicyName"]}: {str(e)}')
+            print(f'Error fetching policy: {str(e)}')
     return policies
 
 
-def build_compact_iam_summary(users, roles, policies):
+def build_compact_summary(users, roles, policies):
     user_summaries = []
     for u in users:
         user_summaries.append({
             'username': u['username'],
             'policies': u['policies'],
             'groups': u['groups'],
-            'has_access_keys': len(u['access_keys']) > 0,
             'key_count': len(u['access_keys']),
             'inline_policies': u['inline_policies']
         })
-
     return {
         'total_users': len(users),
         'users': user_summaries,
         'roles_count': len(roles),
         'roles': [{'name': r['name'], 'policies': r['policies']} for r in roles[:5]],
-        'custom_policies_count': len(policies),
-        'custom_policies': [{'name': p['name']} for p in policies]
+        'custom_policies': [p['name'] for p in policies]
     }
 
 
-def analyse_iam_with_langchain(users, roles, policies, kb_context):
-    llm = get_llm()
+def analyse_iam(users, roles, policies, kb_context):
+    compact = build_compact_summary(users, roles, policies)
 
-    kb_short = kb_context[:2000] if len(kb_context) > 2000 else kb_context
-
-    template_str = (
+    prompt = (
         "You are an expert AWS IAM security auditor for PierreGuard AI.\n\n"
-        "Assess this IAM configuration against PierreGuard Security Standards.\n\n"
-        "SECURITY STANDARDS SUMMARY:\n{security_standards}\n\n"
-        "IAM DATA:\n{iam_data}\n\n"
-        "Produce a security audit with these sections:\n\n"
+        "PIERREGUARD SECURITY STANDARDS:\n"
+        + kb_context +
+        "\n\nIAM CONFIGURATION:\n"
+        + json.dumps(compact, indent=2, default=str) +
+        "\n\nProduce a security audit with these sections:\n\n"
         "1. EXECUTIVE SUMMARY\n"
         "   - Risk score 1-10\n"
         "   - Brief summary\n\n"
@@ -189,7 +180,7 @@ def analyse_iam_with_langchain(users, roles, policies, kb_context):
         "   - Brief list\n\n"
         "6. USER RISK SUMMARY\n"
         "   - Format: USERNAME | RISK_LEVEL | REASON\n"
-        "   - RISK_LEVEL: CRITICAL, HIGH, MEDIUM, LOW, or CLEAN\n\n"
+        "   - RISK_LEVEL must be: CRITICAL, HIGH, MEDIUM, LOW, or CLEAN\n\n"
         "7. REMEDIATION PLAN\n"
         "   - Top 5 priority actions with AWS CLI commands\n\n"
         "8. COMPLIANCE STATUS\n"
@@ -197,21 +188,7 @@ def analyse_iam_with_langchain(users, roles, policies, kb_context):
         "Be specific. Name exact users and policies."
     )
 
-    prompt_template = PromptTemplate(
-        input_variables=['iam_data', 'security_standards'],
-        template=template_str
-    )
-
-    compact_summary = build_compact_iam_summary(users, roles, policies)
-
-    chain = prompt_template | llm | StrOutputParser()
-
-    result = chain.invoke({
-        'iam_data': json.dumps(compact_summary, indent=2, default=str),
-        'security_standards': kb_short
-    })
-
-    return result
+    return call_claude(prompt)
 
 
 def parse_user_risk_summary(report):
@@ -242,22 +219,20 @@ def parse_user_risk_summary(report):
 @app.route('/api/scan', methods=['POST'])
 def scan_iam():
     try:
-        print('Querying PierreGuard Security Standards knowledge base...')
+        print('Querying knowledge base...')
         kb_context = query_knowledge_base(
-            'IAM security standards access key MFA least privilege user lifecycle'
+            'IAM security standards access key MFA least privilege'
         )
-        print(f'Retrieved {len(kb_context)} chars from knowledge base')
+        print(f'KB: {len(kb_context)} chars')
 
         print('Fetching IAM data...')
         users = fetch_iam_users()
-        print(f'Fetched {len(users)} users')
         roles = fetch_iam_roles()
-        print(f'Fetched {len(roles)} roles')
         policies = fetch_iam_policies()
-        print(f'Fetched {len(policies)} custom policies')
+        print(f'Users: {len(users)}, Roles: {len(roles)}, Policies: {len(policies)}')
 
-        print('Running LangChain analysis...')
-        report = analyse_iam_with_langchain(users, roles, policies, kb_context)
+        print('Calling Claude via Bedrock...')
+        report = analyse_iam(users, roles, policies, kb_context)
         print('Analysis complete')
 
         user_risks = parse_user_risk_summary(report)
