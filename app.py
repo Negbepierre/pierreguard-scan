@@ -5,8 +5,8 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 from langchain_aws import ChatBedrock
-from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 
 load_dotenv()
 
@@ -189,8 +189,6 @@ def analyse_iam_with_langchain(users, roles, policies, kb_context):
         template=template_str
     )
 
-    chain = LLMChain(llm=llm, prompt=prompt_template)
-
     iam_summary = {
         'users': users,
         'roles_count': len(roles),
@@ -198,12 +196,14 @@ def analyse_iam_with_langchain(users, roles, policies, kb_context):
         'custom_policies': policies
     }
 
+    chain = prompt_template | llm | StrOutputParser()
+
     result = chain.invoke({
         'iam_data': json.dumps(iam_summary, indent=2, default=str),
         'security_standards': kb_context
     })
 
-    return result['text']
+    return result
 
 
 def parse_user_risk_summary(report):
