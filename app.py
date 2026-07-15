@@ -14,7 +14,7 @@ AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
 AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
 AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
 KNOWLEDGE_BASE_ID = os.environ.get('KNOWLEDGE_BASE_ID', '58SGJUBGOB')
-CLAUDE_MODEL = 'anthropic.claude-3-haiku-20240307-v1:0'
+CLAUDE_MODEL = 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'
 
 iam_client = boto3.client(
     'iam',
@@ -41,7 +41,7 @@ bedrock_agent = boto3.client(
 def call_claude(prompt):
     body = json.dumps({
         'anthropic_version': 'bedrock-2023-05-31',
-        'max_tokens': 2500,
+        'max_tokens': 8000,
         'temperature': 0,
         'messages': [
             {'role': 'user', 'content': prompt}
