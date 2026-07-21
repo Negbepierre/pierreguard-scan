@@ -1,8 +1,6 @@
 flask
 flask-cors
 boto3
-langchain
-langchain-aws
 anthropic
 python-dotenv
 gunicorn
