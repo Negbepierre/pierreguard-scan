@@ -80,7 +80,7 @@ def query_knowledge_base(query):
 def fetch_iam_users():
     response = iam_client.list_users()
     users = []
-    for user in response['Users']:
+    for user in response['Users'][:10]:
         username = user['UserName']
         user_data = {
             'username': username,
