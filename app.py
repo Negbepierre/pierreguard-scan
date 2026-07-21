@@ -50,7 +50,7 @@ bedrock_agent = boto3.client(
 def call_claude(prompt):
     body = json.dumps({
         'anthropic_version': 'bedrock-2023-05-31',
-        'max_tokens': 5000,
+        'max_tokens': 6500,
         'temperature': 0,
         'messages': [
             {'role': 'user', 'content': prompt}
@@ -211,7 +211,7 @@ def parse_user_risk_summary(report):
         if in_section and line.strip().startswith('7.'):
             break
         if in_section and '|' in line:
-            parts = [p.strip() for p in line.split('|')]
+            parts = [p.strip() for p in line.split('|') if p.strip()]
             if len(parts) >= 3:
                 username = parts[0].replace('-', '').replace('*', '').strip()
                 risk = parts[1].strip().upper()
