@@ -19,7 +19,7 @@ CLAUDE_MODEL = 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'
 
 bedrock_config = Config(
     connect_timeout=10,
-    read_timeout=90,
+    read_timeout=200,
     retries={'max_attempts': 2, 'mode': 'standard'}
 )
 
