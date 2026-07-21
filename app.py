@@ -41,7 +41,7 @@ bedrock_agent = boto3.client(
 def call_claude(prompt):
     body = json.dumps({
         'anthropic_version': 'bedrock-2023-05-31',
-        'max_tokens': 8000,
+        'max_tokens': 5000,
         'temperature': 0,
         'messages': [
             {'role': 'user', 'content': prompt}
