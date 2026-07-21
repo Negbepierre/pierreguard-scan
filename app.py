@@ -1,6 +1,7 @@
 import os
 import json
 import boto3
+from botocore.config import Config
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -16,6 +17,12 @@ AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
 KNOWLEDGE_BASE_ID = os.environ.get('KNOWLEDGE_BASE_ID', '58SGJUBGOB')
 CLAUDE_MODEL = 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'
 
+bedrock_config = Config(
+    connect_timeout=10,
+    read_timeout=90,
+    retries={'max_attempts': 2, 'mode': 'standard'}
+)
+
 iam_client = boto3.client(
     'iam',
     region_name=AWS_REGION,
@@ -27,14 +34,16 @@ bedrock_runtime = boto3.client(
     'bedrock-runtime',
     region_name=AWS_REGION,
     aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+    config=bedrock_config
 )
 
 bedrock_agent = boto3.client(
     'bedrock-agent-runtime',
     region_name=AWS_REGION,
     aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+    config=bedrock_config
 )
 
 
